@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NPD Live Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        /* UI Polish */
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 5px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        .table-container { overflow: auto; height: 100%; position: relative; border-top: 1px solid #e2e8f0; }
+        thead th { position: sticky; top: 0; z-index: 20; background-color: #f8fafc; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-bottom: 2px solid #e2e8f0; }
+
+        .tab-btn.active { border-bottom: 3px solid #2563eb; color: #2563eb; font-weight: 800; background-color: #eff6ff; }
+        
+        .excel-link { 
+            color: #2563eb; text-decoration: none; font-weight: 600; 
+            border-bottom: 1px dotted #2563eb; transition: all 0.2s; cursor: pointer;
+        }
+        .excel-link:hover { color: #1d4ed8; border-bottom: 1px solid #1d4ed8; background: #e0e7ff; }
+
+        #customTooltip {
+            position: fixed; background: rgba(15, 23, 42, 0.95); color: white; padding: 10px; border-radius: 6px;
+            font-size: 11px; z-index: 1000; pointer-events: none; display: none; max-width: 250px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3); white-space: pre-line; border: 1px solid #334155;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 font-sans text-slate-800">
+
+    <div id="customTooltip"></div>
+
+    <div id="loadingOverlay" class="fixed inset-0 bg-gray-900 bg-opacity-95 z-50 flex items-center justify-center">
+        <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl p-8 text-center">
+            <div class="mb-6">
+                <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-600 mx-auto mb-4"></div>
+                <h2 class="text-2xl font-bold text-slate-800">Syncing Live Data...</h2>
+                <p class="text-gray-500 mt-2 text-sm">Connecting to Google Sheets</p>
+            </div>
+            <div id="loadingText" class="text-xs font-mono text-blue-600">Initializing...</div>
+        </div>
+    </div>
+
+    <div id="mainDashboard" class="hidden max-w-[1920px] mx-auto p-4 space-y-4">
+        
+        <header class="bg-white p-4 rounded-xl shadow-sm border-l-8 border-blue-600 flex justify-between items-center sticky top-0 z-30 shadow-md">
+            <div>
+                <h1 class="text-2xl font-extrabold text-slate-800">NPD Department</h1>
+                <p class="text-xs text-green-600 font-bold mt-1 flex items-center gap-2">
+                    <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span> Live System • Prepared by Sushil Dubey
+                </p>
+            </div>
+            
+            <div class="flex gap-8">
+                <div class="text-center px-4 border-r border-slate-100">
+                    <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Active Projects</p>
+                    <p class="text-3xl font-black text-slate-700 mt-1" id="kpi-active-proj">0</p>
+                </div>
+                <div class="text-center px-4 border-r border-slate-100">
+                    <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Active Variants</p>
+                    <p class="text-3xl font-black text-blue-600 mt-1" id="kpi-active-var">0</p>
+                </div>
+                <div class="text-center px-4 border-r border-slate-100">
+                    <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Top Client</p>
+                    <p class="text-xl font-black text-purple-600 mt-2 truncate max-w-[150px]" id="kpi-top-client">-</p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-4" data-html2canvas-ignore="true">
+                 <button onclick="initSystem()" class="bg-blue-50 text-blue-600 hover:bg-blue-100 px-4 py-2 rounded-lg font-bold transition shadow-sm text-sm flex items-center gap-2">
+                    <i class="fas fa-sync-alt"></i> Refresh Data
+                 </button>
+                 <button onclick="downloadPDF()" class="bg-slate-800 text-white hover:bg-slate-700 px-4 py-2 rounded-lg font-bold transition shadow-sm text-sm flex items-center gap-2">
+                    <i class="fas fa-file-pdf"></i> Download Report
+                 </button>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-12 gap-4 h-[450px]">
+            <div class="col-span-3 bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-col">
+                <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 border-b pb-2">
+                    <i class="fas fa-list-ul mr-1"></i> Client Breakdown
+                </h2>
+                <div class="overflow-y-auto flex-1 custom-scrollbar pr-1">
+                    <div id="overviewList" class="space-y-2"></div>
+                </div>
+            </div>
+
+            <div class="col-span-6 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
+                <div class="p-3 border-b border-slate-100 flex justify-between items-center bg-gray-50">
+                    <h3 class="font-bold text-slate-700 text-sm"><i class="fas fa-calendar-alt text-blue-500 mr-2"></i> Monthly Workload</h3>
+                    <div class="flex gap-2 text-[10px] font-bold uppercase text-gray-400">
+                        <span><span class="w-2 h-2 rounded-full bg-blue-100 inline-block"></span> Low</span>
+                        <span><span class="w-2 h-2 rounded-full bg-blue-500 inline-block"></span> High</span>
+                    </div>
+                </div>
+                <div class="overflow-auto flex-1 custom-scrollbar p-2">
+                    <table class="w-full text-center border-collapse text-xs" id="heatmapTable"></table>
+                </div>
+            </div>
+
+            <div class="col-span-3 bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-col items-center justify-center">
+                <h3 class="font-bold text-slate-700 mb-4 text-xs w-full text-center uppercase tracking-wide border-b pb-2">Market Share</h3>
+                <div class="h-56 w-full relative"><canvas id="chartClient"></canvas></div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-lg border border-slate-200 flex flex-col h-[700px]">
+            <div class="flex border-b border-gray-200 bg-gray-50 shrink-0" data-html2canvas-ignore="true">
+                <button onclick="switchTab('pending')" id="btn-pending" class="tab-btn active w-1/3 py-4 text-sm text-gray-600 hover:text-blue-600 transition flex justify-center items-center gap-2">
+                    <i class="fas fa-clock text-amber-500 text-lg"></i> <span class="uppercase tracking-wide">Pending Projects</span>
+                </button>
+                <button onclick="switchTab('archive')" id="btn-archive" class="tab-btn w-1/3 py-4 text-sm text-gray-600 hover:text-blue-600 transition flex justify-center items-center gap-2">
+                    <i class="fas fa-box-open text-purple-500 text-lg"></i> <span class="uppercase tracking-wide">Archive (Dispatched)</span>
+                </button>
+                <button onclick="switchTab('reports')" id="btn-reports" class="tab-btn w-1/3 py-4 text-sm text-gray-600 hover:text-blue-600 transition flex justify-center items-center gap-2">
+                    <i class="fas fa-file-alt text-red-500 text-lg"></i> <span class="uppercase tracking-wide">Report Pending</span>
+                </button>
+            </div>
+
+            <div class="p-3 border-b border-gray-100 flex justify-between items-center gap-4 bg-white shrink-0" data-html2canvas-ignore="true">
+                <div class="relative w-96">
+                    <i class="fas fa-search absolute left-4 top-2.5 text-gray-400 text-sm"></i>
+                    <input type="text" id="searchInput" onkeyup="filterCurrentTable()" placeholder="Search..." 
+                           class="w-full pl-10 p-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition shadow-sm">
+                </div>
+                <div class="bg-blue-50 text-blue-700 px-4 py-1 rounded-full text-xs font-bold uppercase tracking-wide shadow-sm" id="rowCount">0 Records</div>
+            </div>
+
+            <div class="table-container bg-white flex-1">
+                <table class="w-full text-left border-collapse min-w-max">
+                    <thead id="tableHeaders"></thead>
+                    <tbody id="tableBody" class="divide-y divide-gray-100"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. CONFIGURATION: YOUR LIVE LINKS ---
+        const SHEET_LINKS = {
+            "HOME": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTmiTMeTYD0r3V3EGwxd004DQWOjC0_gFwKTLludcaLzbcFi45-J6xO-5nCu_G8jfNa5EBFA1TJnQyr/pub?gid=919635137&single=true&output=csv",
+            "NPD": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTmiTMeTYD0r3V3EGwxd004DQWOjC0_gFwKTLludcaLzbcFi45-J6xO-5nCu_G8jfNa5EBFA1TJnQyr/pub?gid=1395344164&single=true&output=csv",
+            "Dispatch": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTmiTMeTYD0r3V3EGwxd004DQWOjC0_gFwKTLludcaLzbcFi45-J6xO-5nCu_G8jfNa5EBFA1TJnQyr/pub?gid=2101135250&single=true&output=csv",
+            "Report": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTmiTMeTYD0r3V3EGwxd004DQWOjC0_gFwKTLludcaLzbcFi45-J6xO-5nCu_G8jfNa5EBFA1TJnQyr/pub?gid=1985655452&single=true&output=csv"
+        };
+
+        // --- GLOBAL VARIABLES ---
+        let dataStore = { master: [], reports: [], archive: [] };
+        let currentTab = 'pending';
+        let chartInstance = null;
+
+        // --- 2. INITIALIZATION ---
+        window.onload = function() { initSystem(); };
+
+        async function initSystem() {
+            const statusEl = document.getElementById('loadingText');
+            document.getElementById('loadingOverlay').classList.remove('hidden');
+            
+            try {
+                statusEl.innerText = "Fetching 4 Data Streams...";
+                
+                // Use CORS Proxy to bypass browser security for CSVs
+                const proxy = "https://corsproxy.io/?";
+                
+                const fetchCSV = async (url) => {
+                    const response = await fetch(proxy + encodeURIComponent(url));
+                    if (!response.ok) throw new Error("Connection Error");
+                    return await response.text();
+                };
+
+                // Fetch all in parallel
+                const [homeCsv, npdCsv, dispatchCsv, reportCsv] = await Promise.all([
+                    fetchCSV(SHEET_LINKS.HOME),
+                    fetchCSV(SHEET_LINKS.NPD),
+                    fetchCSV(SHEET_LINKS.Dispatch),
+                    fetchCSV(SHEET_LINKS.Report)
+                ]);
+
+                statusEl.innerText = "Processing Data Models...";
+
+                // Create a "Virtual Workbook" object that mimics a local file upload
+                // This allows us to use all the same logic we wrote before!
+                const virtualWorkbook = {
+                    SheetNames: ["HOME", "NPD", "Dispatch", "Report"],
+                    Sheets: {
+                        "HOME": XLSX.read(homeCsv, {type: 'string'}).Sheets.Sheet1,
+                        "NPD": XLSX.read(npdCsv, {type: 'string'}).Sheets.Sheet1,
+                        "Dispatch": XLSX.read(dispatchCsv, {type: 'string'}).Sheets.Sheet1,
+                        "Report": XLSX.read(reportCsv, {type: 'string'}).Sheets.Sheet1
+                    }
+                };
+
+                // Run the parser
+                processWorkbook(virtualWorkbook);
+
+            } catch (error) {
+                console.error(error);
+                statusEl.innerText = "Connection Failed. Retrying in 3 seconds...";
+                setTimeout(initSystem, 3000);
+            }
+        }
+
+        // --- 3. SMART PARSER (Unchanged Logic) ---
+        function processWorkbook(workbook) {
+            const parseSheet = (nameParts, keywords, requiredColMatch) => {
+                let sheetName = "";
+                for(let part of nameParts) {
+                    sheetName = workbook.SheetNames.find(n => n.toLowerCase().includes(part.toLowerCase()));
+                    if(sheetName) break;
+                }
+                if (!sheetName) return []; 
+
+                const ws = workbook.Sheets[sheetName];
+                const range = XLSX.utils.decode_range(ws['!ref']);
+                let data = [];
+                let headers = [];
+                let headerRow = -1;
+
+                // Find Header
+                for (let R = range.s.r; R <= Math.min(range.e.r, 30); ++R) {
+                    let rowTxt = "";
+                    for (let C = range.s.c; C <= range.e.c; ++C) {
+                        const cell = ws[XLSX.utils.encode_cell({c:C, r:R})];
+                        if (cell && cell.v) rowTxt += cell.v + " ";
+                    }
+                    if (keywords.some(k => rowTxt.toLowerCase().includes(k.toLowerCase()))) {
+                        headerRow = R;
+                        for (let C = range.s.c; C <= range.e.c; ++C) {
+                            const cell = ws[XLSX.utils.encode_cell({c:C, r:R})];
+                            headers[C] = (cell && cell.v) ? String(cell.v).trim() : `Col${C}`;
+                        }
+                        break;
+                    }
+                }
+                if (headerRow === -1) return [];
+
+                // Extract Data
+                for (let R = headerRow + 1; R <= range.e.r; ++R) {
+                    let rowObj = {};
+                    let hasData = false;
+                    for (let C = range.s.c; C <= range.e.c; ++C) {
+                        const cell = ws[XLSX.utils.encode_cell({c:C, r:R})];
+                        const header = headers[C];
+                        if (!header) continue;
+
+                        let val = "";
+                        let link = null;
+
+                        if (cell) {
+                            val = cell.w || cell.v;
+                            if (cell.l && cell.l.Target) link = cell.l.Target; 
+                            
+                            // Try to detect URL in text if Link object is missing (Common in CSV)
+                            if (!link && String(val).startsWith("http")) link = val;
+
+                            if (typeof cell.v === 'number' && cell.v > 40000 && cell.v < 60000) {
+                                if (header.toLowerCase().includes('date') || header.toLowerCase().includes('dt')) val = formatDate(cell.v);
+                            }
+                        }
+                        rowObj[header] = { v: val || "", l: link };
+                        if (val) hasData = true;
+                    }
+                    
+                    // Strict Filter: Client Name must exist
+                    let isValidRow = false;
+                    if (requiredColMatch) {
+                        const keys = Object.keys(rowObj);
+                        const matchKey = keys.find(k => k.toLowerCase().includes(requiredColMatch.toLowerCase()));
+                        if (matchKey && rowObj[matchKey].v && String(rowObj[matchKey].v).trim() !== "") isValidRow = true;
+                    } else if (hasData) isValidRow = true;
+
+                    if (isValidRow) data.push(rowObj);
+                }
+                return data;
+            };
+
+            const rawMaster = parseSheet(["NPD"], ["Client", "Project"], "Client");
+            if (rawMaster.length === 0) { 
+                document.getElementById('loadingText').innerText = "Error: NPD Sheet Not Found"; 
+                return; 
+            }
+
+            dataStore.master = rawMaster;
+            dataStore.reports = parseSheet(["Report"], ["Report", "Drg"], "Drg");
+            dataStore.archive = rawMaster.filter(r => {
+                const s = r['Status'] ? String(r['Status'].v).toLowerCase() : "";
+                const hasDispatch = Object.values(r).some(c => c.v && String(c.v).toLowerCase().includes("dispatched"));
+                return s.includes("dispatched") || hasDispatch;
+            });
+
+            document.getElementById('loadingOverlay').classList.add('hidden');
+            document.getElementById('mainDashboard').classList.remove('hidden');
+            document.getElementById('mainDashboard').classList.add('block');
+            
+            updateDashboard();
+        }
+
+        function formatDate(val) {
+            const date = new Date(Math.round((val - 25569) * 86400 * 1000));
+            return isNaN(date) ? val : date.toLocaleDateString('en-GB');
+        }
+
+        // --- 4. DASHBOARD LOGIC ---
+        function updateDashboard() {
+            // KPI Calculation
+            const activeProjects = dataStore.master.filter(r => !(String(r['Status'].v).toLowerCase().includes('dispatched')));
+            let totalProj = activeProjects.length;
+            let totalVar = activeProjects.reduce((sum, r) => sum + (parseFloat(r['Var.'] ? r['Var.'].v : (r['Var'] ? r['Var'].v : 0)) || 0), 0);
+
+            document.getElementById('kpi-active-proj').innerText = totalProj;
+            document.getElementById('kpi-active-var').innerText = totalVar;
+            renderAnalytics();
+            switchTab('pending');
+        }
+
+        function renderAnalytics() {
+            let heatmap = {}; let stats = {};
+            dataStore.master.forEach(row => {
+                const client = (row['Client'] ? String(row['Client'].v).trim() : "Unknown").toUpperCase();
+                if(!client) return;
+                const vars = parseFloat(row['Var.'] ? row['Var.'].v : 0) || 0;
+                const project = row['Project'] ? row['Project'].v : "-";
+                
+                if(!stats[client]) stats[client] = { count: 0, vars: 0 };
+                stats[client].count++; stats[client].vars += vars;
+
+                const status = row['Status'] ? String(row['Status'].v) : "";
+                let dateText = status;
+                Object.values(row).forEach(c => { if(c.v && String(c.v).toLowerCase().includes("dispatched on")) dateText += " " + c.v; });
+
+                let month = -1; let displayDate = "";
+                if (dateText.toLowerCase().includes("dispatched on")) {
+                    const matches = dateText.match(/(\d{1,2}\/\d{1,2})|(\d{4}-\d{2}-\d{2})/);
+                    if (matches) {
+                        const datePart = matches[0]; displayDate = datePart;
+                        if (datePart.includes('/')) month = parseInt(datePart.split('/')[1]) - 1;
+                        else if (datePart.includes('-')) month = new Date(datePart).getMonth();
+                    }
+                }
+                
+                if (month >= 0 && month <= 11) {
+                    if (!heatmap[client]) heatmap[client] = Array.from({length: 12}, () => ({ count: 0, details: [] }));
+                    heatmap[client][month].count += vars;
+                    heatmap[client][month].details.push(`• ${project} (${displayDate})`);
+                }
+            });
+
+            const clients = Object.keys(stats);
+            const top = clients.length > 0 ? clients.reduce((a, b) => stats[a].vars > stats[b].vars ? a : b) : "-";
+            document.getElementById('kpi-top-client').innerText = top;
+
+            const listEl = document.getElementById('overviewList');
+            listEl.innerHTML = "";
+            clients.sort().forEach(c => {
+                if(c !== "UNKNOWN" && c !== "TOTAL") {
+                    listEl.innerHTML += `
+                    <div class="flex justify-between items-center p-2 border border-slate-100 rounded bg-slate-50 text-xs">
+                        <span class="font-bold text-slate-700 truncate w-1/2">${c}</span>
+                        <div class="text-right flex gap-2"><span>P:<b>${stats[c].count}</b></span><span>V:<b class="text-blue-600">${stats[c].vars}</b></span></div>
+                    </div>`;
+                }
+            });
+
+            const months = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
+            let hHtml = `<thead><tr><th class="p-2 w-24 text-left bg-gray-50 z-20 sticky left-0 border-b border-r border-slate-200 text-[10px]">Client</th>` + 
+                        months.map(m => `<th class="p-1 w-8 text-center text-gray-400 font-bold bg-gray-50 border-b text-[9px]">${m}</th>`).join('') + 
+                        `<th class="p-1 w-10 text-center text-blue-700 font-bold bg-gray-50 border-b text-[9px]">Tot</th></tr></thead><tbody>`;
+            
+            Object.keys(heatmap).sort().forEach(c => {
+                let totalVars = stats[c].vars || 0;
+                hHtml += `<tr class="border-b border-gray-50 hover:bg-gray-50"><td class="p-2 font-bold text-[10px] sticky left-0 bg-white border-r border-slate-200 z-10 text-slate-600">${c}</td>`;
+                heatmap[c].forEach(cell => {
+                    let v = cell.count;
+                    let bg = v === 0 ? "text-gray-200" : (v < 5 ? "bg-blue-100 text-blue-600" : "bg-blue-600 text-white shadow-sm");
+                    let evt = v > 0 ? `onmouseenter="showTooltip(event, '${cell.details.join('\\n').replace(/'/g, "\\'")}')" onmouseleave="hideTooltip()"` : "";
+                    hHtml += `<td class="p-1" ${evt}><div class="h-5 w-5 flex items-center justify-center rounded text-[9px] font-bold mx-auto cursor-help ${bg}">${v || "-"}</div></td>`;
+                });
+                hHtml += `<td class="p-1"><div class="text-[10px] font-bold text-center text-blue-600">${totalVars}</div></td></tr>`;
+            });
+            document.getElementById('heatmapTable').innerHTML = hHtml + "</tbody>";
+
+            if(clients.length > 0) {
+                const sorted = Object.entries(stats).sort((a,b) => b[1].vars-a[1].vars).slice(0, 6);
+                if (chartInstance) chartInstance.destroy();
+                const ctx = document.getElementById('chartClient').getContext('2d');
+                chartInstance = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: sorted.map(d => d[0]),
+                        datasets: [{ data: sorted.map(d => d[1].vars), backgroundColor: ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#64748b'], borderWidth: 0 }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 8, font: {size: 9} } } }, cutout: '65%' }
+                });
+            }
+        }
+
+        const tooltipEl = document.getElementById('customTooltip');
+        function showTooltip(e, text) { tooltipEl.innerText = text; tooltipEl.style.display = 'block'; tooltipEl.style.left = (e.clientX + 10) + 'px'; tooltipEl.style.top = (e.clientY + 10) + 'px'; }
+        function hideTooltip() { tooltipEl.style.display = 'none'; }
+
+        function switchTab(tab) {
+            currentTab = tab;
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById(`btn-${tab}`).classList.add('active');
+            filterCurrentTable();
+        }
+
+        function filterCurrentTable() {
+            const term = document.getElementById('searchInput').value.toLowerCase();
+            const thead = document.getElementById('tableHeaders');
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = ""; thead.innerHTML = "";
+
+            let source = [];
+            if (currentTab === 'pending') {
+                source = dataStore.master.filter(r => !(String(r['Status'].v).toLowerCase().includes('dispatched')));
+            } else if (currentTab === 'archive') source = dataStore.archive; 
+            else source = dataStore.reports;
+
+            if (source.length === 0) {
+                document.getElementById('rowCount').innerText = "0 Records";
+                tbody.innerHTML = `<tr><td class="p-8 text-center text-gray-400 italic">No records found.</td></tr>`;
+                return;
+            }
+
+            const cols = Object.keys(source[0]);
+            let hRow = "";
+            cols.forEach(c => hRow += `<th class="p-4 text-xs font-bold text-gray-600 bg-gray-50 border-b whitespace-nowrap uppercase tracking-wider">${c}</th>`);
+            thead.innerHTML = hRow;
+
+            const filtered = source.filter(r => Object.values(r).some(cell => String(cell.v).toLowerCase().includes(term)));
+            
+            filtered.slice(0, 500).forEach(row => {
+                let tr = `<tr class="hover:bg-blue-50 border-b border-gray-50 transition group">`;
+                cols.forEach(c => {
+                    const cell = row[c] || {v:"", l:null};
+                    let val = cell.v;
+                    let content = val;
+                    if (cell.l) content = `<a href="${cell.l}" target="_blank" class="excel-link">${val} <i class="fas fa-external-link-alt text-[9px] ml-1"></i></a>`;
+                    if (currentTab === 'pending' && String(val).toLowerCase() === "pending") content = `<span class="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-xs font-bold">Pending</span>`;
+                    tr += `<td class="p-4 text-sm whitespace-nowrap text-slate-600">${content}</td>`;
+                });
+                tr += "</tr>";
+                tbody.innerHTML += tr;
+            });
+            document.getElementById('rowCount').innerText = `${filtered.length} Records`;
+        }
+
+        function downloadPDF() {
+            const element = document.getElementById('mainDashboard');
+            const opt = { margin: 0.1, filename: 'NPD_Dashboard_A3.pdf', image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 1.5, useCORS: true }, jsPDF: { unit: 'in', format: 'a3', orientation: 'landscape' } };
+            html2pdf().set(opt).from(element).save();
+        }
+    </script>
+</body>
+</html>
