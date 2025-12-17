@@ -2,30 +2,22 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>NPD Live Dashboard</title>
+    <title>NPD Live Dashboard (Stable)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
-        /* UI Polish */
         ::-webkit-scrollbar { width: 10px; height: 10px; }
         ::-webkit-scrollbar-track { background: #f1f5f9; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 5px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-
         .table-container { overflow: auto; height: 100%; position: relative; border-top: 1px solid #e2e8f0; }
         thead th { position: sticky; top: 0; z-index: 20; background-color: #f8fafc; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-bottom: 2px solid #e2e8f0; }
-
         .tab-btn.active { border-bottom: 3px solid #2563eb; color: #2563eb; font-weight: 800; background-color: #eff6ff; }
-        
-        .excel-link { 
-            color: #2563eb; text-decoration: none; font-weight: 600; 
-            border-bottom: 1px dotted #2563eb; transition: all 0.2s; cursor: pointer;
-        }
+        .excel-link { color: #2563eb; text-decoration: none; font-weight: 600; border-bottom: 1px dotted #2563eb; transition: all 0.2s; cursor: pointer; }
         .excel-link:hover { color: #1d4ed8; border-bottom: 1px solid #1d4ed8; background: #e0e7ff; }
-
         #customTooltip {
             position: fixed; background: rgba(15, 23, 42, 0.95); color: white; padding: 10px; border-radius: 6px;
             font-size: 11px; z-index: 1000; pointer-events: none; display: none; max-width: 250px;
@@ -40,11 +32,17 @@
     <div id="loadingOverlay" class="fixed inset-0 bg-gray-900 bg-opacity-95 z-50 flex items-center justify-center">
         <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl p-8 text-center">
             <div class="mb-6">
-                <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-600 mx-auto mb-4"></div>
-                <h2 class="text-2xl font-bold text-slate-800">Syncing Live Data...</h2>
-                <p class="text-gray-500 mt-2 text-sm">Connecting to Google Sheets</p>
+                <div id="spinner" class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-600 mx-auto mb-4"></div>
+                <div id="errorIcon" class="hidden text-red-500 text-5xl mb-4"><i class="fas fa-exclamation-circle"></i></div>
+                
+                <h2 id="statusTitle" class="text-2xl font-bold text-slate-800">Syncing Live Data...</h2>
+                <p id="statusDesc" class="text-gray-500 mt-2 text-sm">Establishing secure connection...</p>
             </div>
-            <div id="loadingText" class="text-xs font-mono text-blue-600">Initializing...</div>
+            <div id="loadingText" class="text-xs font-mono text-blue-600 bg-blue-50 p-2 rounded truncate">Initializing...</div>
+            
+            <button id="retryBtn" onclick="location.reload()" class="hidden mt-6 bg-blue-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-blue-700 transition">
+                Try Again
+            </button>
         </div>
     </div>
 
@@ -74,8 +72,8 @@
             </div>
 
             <div class="flex items-center gap-4" data-html2canvas-ignore="true">
-                 <button onclick="initSystem()" class="bg-blue-50 text-blue-600 hover:bg-blue-100 px-4 py-2 rounded-lg font-bold transition shadow-sm text-sm flex items-center gap-2">
-                    <i class="fas fa-sync-alt"></i> Refresh Data
+                 <button onclick="location.reload()" class="bg-blue-50 text-blue-600 hover:bg-blue-100 px-4 py-2 rounded-lg font-bold transition shadow-sm text-sm flex items-center gap-2">
+                    <i class="fas fa-sync-alt"></i> Refresh
                  </button>
                  <button onclick="downloadPDF()" class="bg-slate-800 text-white hover:bg-slate-700 px-4 py-2 rounded-lg font-bold transition shadow-sm text-sm flex items-center gap-2">
                     <i class="fas fa-file-pdf"></i> Download Report
@@ -162,32 +160,45 @@
 
         async function initSystem() {
             const statusEl = document.getElementById('loadingText');
-            document.getElementById('loadingOverlay').classList.remove('hidden');
-            
+            const titleEl = document.getElementById('statusTitle');
+            const descEl = document.getElementById('statusDesc');
+
             try {
-                statusEl.innerText = "Fetching 4 Data Streams...";
-                
-                // Use CORS Proxy to bypass browser security for CSVs
-                const proxy = "https://corsproxy.io/?";
-                
-                const fetchCSV = async (url) => {
-                    const response = await fetch(proxy + encodeURIComponent(url));
-                    if (!response.ok) throw new Error("Connection Error");
-                    return await response.text();
+                // PRIMARY ENGINE (AllOrigins)
+                const fetchWithEngine1 = async (url) => {
+                    // Add timestamp to prevent caching
+                    const cacheBuster = "&t=" + new Date().getTime();
+                    const target = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}${cacheBuster}`;
+                    const res = await fetch(target);
+                    if (!res.ok) throw new Error("Engine 1 failed");
+                    return await res.text();
                 };
 
-                // Fetch all in parallel
+                // FALLBACK ENGINE (CorsProxy)
+                const fetchWithEngine2 = async (url) => {
+                    const target = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+                    const res = await fetch(target);
+                    if (!res.ok) throw new Error("Engine 2 failed");
+                    return await res.text();
+                };
+
+                // Smart Fetcher: Tries Engine 1, falls back to Engine 2
+                const smartFetch = async (url) => {
+                    try { return await fetchWithEngine1(url); }
+                    catch (e) { console.warn("Switching to backup engine..."); return await fetchWithEngine2(url); }
+                };
+
+                statusEl.innerText = "Connecting to Satellite 1...";
+                
                 const [homeCsv, npdCsv, dispatchCsv, reportCsv] = await Promise.all([
-                    fetchCSV(SHEET_LINKS.HOME),
-                    fetchCSV(SHEET_LINKS.NPD),
-                    fetchCSV(SHEET_LINKS.Dispatch),
-                    fetchCSV(SHEET_LINKS.Report)
+                    smartFetch(SHEET_LINKS.HOME),
+                    smartFetch(SHEET_LINKS.NPD),
+                    smartFetch(SHEET_LINKS.Dispatch),
+                    smartFetch(SHEET_LINKS.Report)
                 ]);
 
                 statusEl.innerText = "Processing Data Models...";
 
-                // Create a "Virtual Workbook" object that mimics a local file upload
-                // This allows us to use all the same logic we wrote before!
                 const virtualWorkbook = {
                     SheetNames: ["HOME", "NPD", "Dispatch", "Report"],
                     Sheets: {
@@ -198,17 +209,21 @@
                     }
                 };
 
-                // Run the parser
                 processWorkbook(virtualWorkbook);
 
             } catch (error) {
                 console.error(error);
-                statusEl.innerText = "Connection Failed. Retrying in 3 seconds...";
-                setTimeout(initSystem, 3000);
+                document.getElementById('spinner').classList.add('hidden');
+                document.getElementById('errorIcon').classList.remove('hidden');
+                titleEl.innerText = "Connection Failed";
+                titleEl.classList.add('text-red-600');
+                descEl.innerText = "Could not reach Google Sheets.";
+                statusEl.innerText = "Check your internet connection.";
+                document.getElementById('retryBtn').classList.remove('hidden');
             }
         }
 
-        // --- 3. SMART PARSER (Unchanged Logic) ---
+        // --- 3. SMART PARSER ---
         function processWorkbook(workbook) {
             const parseSheet = (nameParts, keywords, requiredColMatch) => {
                 let sheetName = "";
@@ -224,7 +239,6 @@
                 let headers = [];
                 let headerRow = -1;
 
-                // Find Header
                 for (let R = range.s.r; R <= Math.min(range.e.r, 30); ++R) {
                     let rowTxt = "";
                     for (let C = range.s.c; C <= range.e.c; ++C) {
@@ -242,7 +256,6 @@
                 }
                 if (headerRow === -1) return [];
 
-                // Extract Data
                 for (let R = headerRow + 1; R <= range.e.r; ++R) {
                     let rowObj = {};
                     let hasData = false;
@@ -257,8 +270,6 @@
                         if (cell) {
                             val = cell.w || cell.v;
                             if (cell.l && cell.l.Target) link = cell.l.Target; 
-                            
-                            // Try to detect URL in text if Link object is missing (Common in CSV)
                             if (!link && String(val).startsWith("http")) link = val;
 
                             if (typeof cell.v === 'number' && cell.v > 40000 && cell.v < 60000) {
@@ -269,7 +280,6 @@
                         if (val) hasData = true;
                     }
                     
-                    // Strict Filter: Client Name must exist
                     let isValidRow = false;
                     if (requiredColMatch) {
                         const keys = Object.keys(rowObj);
@@ -284,7 +294,7 @@
 
             const rawMaster = parseSheet(["NPD"], ["Client", "Project"], "Client");
             if (rawMaster.length === 0) { 
-                document.getElementById('loadingText').innerText = "Error: NPD Sheet Not Found"; 
+                document.getElementById('loadingText').innerText = "Error: NPD Sheet Empty or Missing"; 
                 return; 
             }
 
@@ -308,9 +318,7 @@
             return isNaN(date) ? val : date.toLocaleDateString('en-GB');
         }
 
-        // --- 4. DASHBOARD LOGIC ---
         function updateDashboard() {
-            // KPI Calculation
             const activeProjects = dataStore.master.filter(r => !(String(r['Status'].v).toLowerCase().includes('dispatched')));
             let totalProj = activeProjects.length;
             let totalVar = activeProjects.reduce((sum, r) => sum + (parseFloat(r['Var.'] ? r['Var.'].v : (r['Var'] ? r['Var'].v : 0)) || 0), 0);
